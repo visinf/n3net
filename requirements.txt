@@ -1,0 +1,6 @@
+pyyaml==3.12
+Cython==0.28.2
+tensorboardX==1.2
+torchvision==0.2.0
+scipy==1.0.1
+h5py==2.7.1
