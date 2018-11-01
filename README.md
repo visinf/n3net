@@ -4,6 +4,8 @@ Official implementation of the denoising (PyTorch) and correspondence classifica
 
 Tobias Plötz and Stefan Roth, **Neural Nearest Neighbors Networks**, Advances in Neural Information Processing Systems (NIPS), 2018
 
+Preprint: https://arxiv.org/abs/1810.12575
+
 Contact: Tobias Plötz (tobias.ploetz@visinf.tu-darmstadt.de)
 
 # Installation
