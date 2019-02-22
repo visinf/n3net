@@ -5,7 +5,7 @@ This file is part of the implementation as described in the NIPS 2018 paper:
 Tobias Plötz and Stefan Roth, Neural Nearest Neighbors Networks.
 Please see the file LICENSE.txt for the license governing this code.
 '''
-
+import math
 from math import log
 
 import torch
@@ -113,6 +113,24 @@ def aggregate_output(W,x,I, train=True):
     return z
 
 
+def log1mexp(x, expm1_guard = 1e-7):
+    # See https://cran.r-project.org/package=Rmpfr/.../log1mexp-note.pdf
+    t = x < math.log(0.5)
+    y = torch.zeros_like(x)
+    y[t] = torch.log1p(-x[t].exp())
+
+    # for x close to 0 we need expm1 for numerically stable computation
+    # we furtmermore modify the backward pass to avoid instable gradients,
+    # ie situations where the incoming output gradient is close to 0 and the gradient of expm1 is very large
+    expxm1 = torch.expm1(x[1 - t])
+    log1mexp_fw = (-expxm1).log()
+    log1mexp_bw = (-expxm1+expm1_guard).log() # limits magnitude of gradient
+
+    y[1 - t] = log1mexp_fw.detach() + (log1mexp_bw - log1mexp_bw.detach())
+    return y
+
+
+
 class NeuralNearestNeighbors(nn.Module):
     r"""
     Computes neural nearest neighbor volumes based on pairwise distances
@@ -170,12 +188,14 @@ class NeuralNearestNeighbors(nn.Module):
         for r in range(self.k):
             # Eqs. 8 and 10
             weights = F.log_softmax(logits, dim=1)
-            weights_exp = ops.clamp_probs(weights.exp())
+            # weights_exp = ops.clamp_probs(weights.exp())
+            weights_exp = weights.exp()
 
             samples_arr.append(weights_exp.view(b,m,o))
 
             # Eq. 9
-            logits = logits + (1-weights_exp.view(*logits.shape)).log()
+            logits = logits + log1mexp(weights.view(*logits.shape))
+            # logits = logits + (1-weights_exp.view(*logits.shape)).log()
 
         W = torch.stack(samples_arr,dim=3)
 
