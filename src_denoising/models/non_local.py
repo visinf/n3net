@@ -49,11 +49,7 @@ def compute_distances(xe, ye, I, train=True):
         # D -> b m o
         ye = ye.unsqueeze(3)
 
-        if ops.has_tensor_comprehensions():
-            D = -2*ops.indexed_matmul_1_tc(xe, ye.squeeze(3), I).unsqueeze(3)
-        else:
-            # This is slower than inference with tensor comprehensions :(
-            D = -2*torch.cat([ops.indexed_matmul_1(xe, ye[:,i:i+10,:,:].squeeze(3), I[:,i:i+10,:]).unsqueeze(3) for i in range(0,m,10)], dim=1)
+        D = -2*ops.indexed_matmul_1_efficient(xe, ye.squeeze(3), I).unsqueeze(3)
 
         xe_sqs = (xe**2).sum(dim=-1, keepdim=True)
         xe_sqs_ind = xe_sqs.gather(dim=1, index=If[:,:,0:1]).view(b,m,o,1)
@@ -88,27 +84,9 @@ def aggregate_output(W,x,I, train=True):
     b,n,f = x.shape
     m,o = I.shape[1:3]
     k = W.shape[3]
+    # print(b,m,o,k,f,n)
 
-    if not train: 
-        if ops.has_tensor_comprehensions():
-            z = ops.indexed_matmul_2_tc(x, W,I)
-        else:
-            # This is slower than inference with tensor comprehensions :(
-            z = torch.cat([ops.indexed_matmul_2(x, W[:,i:i+10,:,:],I[:,i:i+10,:]) for i in range(0,m,10)], dim=1)
-    else:
-        # W_full -> b k m n
-        W_full = Variable(torch.cuda.FloatTensor(b,k,m,n).fill_(0))
-        If = I.view(b,1,m,o).expand(b,k,m,o)
-        W_full = W_full.scatter_add(source=W.permute(0,3,1,2), index=If, dim=3)
-
-        # x_interm -> b 1(k) f n
-        x_interm = x.view(b,1,n,f)
-
-        # z_interm -> b k f m
-        z_interm = torch.matmul(W_full, x_interm)
-
-        # z -> b m f k
-        z = z_interm.permute(0,2,3,1)
+    z = ops.indexed_matmul_2_efficient(x, W,I)
 
     return z
 
@@ -363,25 +341,44 @@ def index_neighbours(xe_patch, ye_patch, s, exclude_self=True):
     dev = xe_patch.get_device()
     key = "{}_{}_{}_{}_{}_{}_{}".format(n1,n2,m1,m2,s,exclude_self, dev)
     if not key in index_neighbours_cache:
+        I = torch.empty(1,m1*m2,o, device=dev, dtype=torch.int64)
 
-        I = torch.LongTensor(1,m,o).cuda(dev)
+        ih = torch.tensor(range(s), device=dev, dtype=torch.int64).view(1,1,s,1)
+        iw = torch.tensor(range(s), device=dev, dtype=torch.int64).view(1,1,1,s)*n2
 
-        ih = torch.LongTensor(range(s)).cuda(dev).view(s,1)
-        iw = torch.LongTensor(range(s)).cuda(dev).view(1,s)*n2
+        i = torch.tensor(range(m1), device=dev, dtype=torch.int64).view(m1,1,1,1)
+        j = torch.tensor(range(m2), device=dev, dtype=torch.int64).view(1,m2,1,1)
 
-        for i in range(m1):
-            for j in range(m2):
-                midx = i*m2+j
+        ch = (i-s//2).clamp(0,n1-s)
+        cw = (j-s//2).clamp(0,n2-s)
 
-                ch = min(n1-s, max(0,i-s//2))
-                cw = min(n2-s, max(0,j-s//2))
-                cidx = ch*n2+cw
-                mI = cidx + ih + iw
-                mI = mI.view(-1)
-                if exclude_self:
-                    mI = mI[mI!=midx]
+        cidx = ch*n2+cw
+        midx = (i*m2+j).view(m1,m2,1)
 
-                I[0,midx,:] = mI
+        mI = cidx + ih + iw
+        mI = mI.view(m1,m2,-1)
+        mI = mI[mI!=midx].view(m1*m2,-1)
+        I[0,:,:] = mI
+        # I2 = I.clone()
+
+        # ih = torch.LongTensor(range(s)).view(s,1)
+        # iw = torch.LongTensor(range(s)).view(1,s)*n2
+        # for i in range(m1):
+        #     for j in range(m2):
+        #         midx = i*m2+j
+        #
+        #         ch = min(n1-s, max(0,i-s//2))
+        #         cw = min(n2-s, max(0,j-s//2))
+        #         cidx = ch*n2+cw
+        #         mI = cidx + ih + iw
+        #         mI = mI.view(-1)
+        #         if exclude_self:
+        #             mI = mI[mI!=midx]
+        #
+        #         I[0,midx,:] = mI
+        #
+        # ih = ih.cuda(dev)
+        # iw = iw.cuda(dev)
         index_neighbours_cache[key] = I
 
     I = index_neighbours_cache[key]

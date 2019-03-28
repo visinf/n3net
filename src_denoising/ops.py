@@ -13,83 +13,105 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+import matmul_cuda
+
 from torch.autograd import Variable
 
-try:
-    import tensor_comprehensions as tc
-except: pass
 
-def has_tensor_comprehensions():
-    return 'tc' in vars() and 'tc' in globals()
+class IndexedMatmul1Efficient(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, y, I):
+        ctx.save_for_backward(x, y, I)
+        b = y.shape[0]
+        m = y.shape[1]
+        n = x.shape[1]
+        o = I.shape[2]
+        e = x.shape[2]
+        out = torch.tensor(np.zeros(b*m*o), dtype=torch.float).reshape(b,m,o).cuda()
+        matmul_cuda.matmul1(x,y,I,out,n,m,e,o,b)
+        return out
 
-def indexed_matmul_1_tc(x,y,I, tune=False):
-    if not has_tensor_comprehensions():
-        return indexed_matmul_1(x, y ,I)
-
-    lang = """
-    def indexed_matmul_1_tc(float(B,N,E) X, float(B,M,E) Y, int32(B,M,O) I) -> (output) {
-        output(b, m, o) +=! Y(b, m, j) * X(b, I(b,m,o), j)
-    }   
-    """
-
-    b,m,_ = y.shape
-    o = I.shape[2]
-    n,e = x.shape[1:]
-    cachefile  = "tc_kernels/b{}_m{}_o{}_e{}.tc".format(b,m,o,e)
-    op = tc.define(lang, name="indexed_matmul_1_tc")
-    if tune:
-        tune_opt = tc.autotuner_settings
-        tune_opt["cache"] = cachefile
-        op.autotune(x,y,I.int(), **tune_opt)
-
-    out = op(x,y,I.int(), cache=cachefile, options=tc.mapping_options.Options("naive"))
-    if out is None:
-        out = op(x,y,I.int(), options=tc.mapping_options.Options("naive"))
-    return out
+    @staticmethod
+    def backward(ctx, grad):
+        x, y, I = ctx.saved_tensors
+        b = y.shape[0]
+        m = y.shape[1]
+        n = x.shape[1]
+        o = I.shape[2]
+        e = x.shape[2]
+        grad_x = torch.tensor(np.zeros(x.numel()), dtype=torch.float).reshape(x.shape[0],x.shape[1],x.shape[2]).cuda()
+        grad_y = torch.tensor(np.zeros(y.numel()), dtype=torch.float).reshape(y.shape[0],y.shape[1],y.shape[2]).cuda()
+        matmul_cuda.matmul1_bwd(grad,x,y,I,grad_x,grad_y, m, n, e, o, b)
+        return grad_x, grad_y, I
 
 
-def indexed_matmul_1(x,y,I):
-    b,m,_ = y.shape
-    o = I.shape[2]
-    e = x.shape[2]
-    If = I.view(b, m*o,1).expand(b,m*o,e)
-    x_ind = x.gather(dim=1, index=If)
-    x_ind = x_ind.view(b,m,o,e)
-    out = torch.matmul(x_ind, y.unsqueeze(3)).view(b,m,o)
-    return out
+class IndexedMatmul2Efficient(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, y, I, chunk_size=64):
+        ctx.save_for_backward(x, y, I)
+        ctx.chunk_size = chunk_size
+        b,_,o,k = y.shape
+        n,e = x.shape[1:3]
+        m = I.shape[1]
+        x_interm = x.view(b,1,n,e).detach()
+        z_chunks = []
+        for m_offset in range(0,m,chunk_size):
+            this_chunk_size = min(chunk_size, m-m_offset)
+            I_chunk = I[:,m_offset:m_offset+this_chunk_size,:]
+            y_chunk = y[:,m_offset:m_offset+this_chunk_size,:,:]
 
-def indexed_matmul_2_tc(x,y,I, tune=False):
-    if not has_tensor_comprehensions():
-        return indexed_matmul_2(x, y ,I)
+            If = I_chunk.view(b,1,this_chunk_size,o).expand(b,k,this_chunk_size,o)
+            y_full = torch.cuda.FloatTensor(b,k,this_chunk_size,n).fill_(0)
+            y_full = y_full.scatter_add(source=y_chunk.permute(0,3,1,2), index=If, dim=3)
+            z_interm = torch.cat([torch.matmul(y_full[:,i_k:i_k+1,:,:], x_interm) for i_k in range(k)], 1)
+            z_chunk = z_interm.permute(0,2,3,1)
+            z_chunks.append(z_chunk)
+        z = torch.cat(z_chunks, 1)
+        return z
 
-    lang = """
-    def indexed_matmul_2_tc(float(B,N,F) X, float(B,M,O,K) Y, int32(B,M,O) I) -> (output) {
-        output(b, m, f, k) +=! Y(b, m, o, k) * X(b, I(b,m,o), f)
-    }
-    """
-    b,m,_,k = y.shape
-    o = I.shape[2]
-    n,f = x.shape[1:]
-    cachefile = "tc_kernels/b{}_m{}_o{}_k{}_f{}.tc".format(b,m,o,k,f)
-    op = tc.define(lang, name="indexed_matmul_2_tc")
-    if tune:
-        tune_opt = tc.autotuner_settings
-        tune_opt["cache"] = cachefile
-        op.autotune(x,y,I.int(), **tune_opt)
+    @staticmethod
+    def backward(ctx, grad):
+        x, y, I = ctx.saved_tensors
+        chunk_size = ctx.chunk_size
+        b,_,o,k = y.shape
+        n,e = x.shape[1:3]
+        m = I.shape[1]
+        x_interm = x.view(b,1,n,e).detach()
+        grad_x = torch.zeros_like(x)
+        grad_y_chunks = []
 
-    out = op(x,y,I.int(), cache=cachefile, options=tc.mapping_options.Options("naive"))
-    if out is None:
-        out = op(x,y,I.int(), options=tc.mapping_options.Options("naive"))
-    return out
+        for m_offset in range(0,m,chunk_size):
+            this_chunk_size = min(chunk_size, m-m_offset)
+            I_chunk = I[:,m_offset:m_offset+this_chunk_size,:]
+            y_chunk = y[:,m_offset:m_offset+this_chunk_size,:,:]
+            grad_chunk = grad[:,m_offset:m_offset+this_chunk_size,:,:].permute(0,3,2,1)
 
-def indexed_matmul_2(x,y,I):
-    b,m,o,k= y.shape
-    e = x.shape[2]
-    If = I.view(b, m*o, 1).expand(b,m*o,e)
-    x_ind = x.gather(dim=1, index=If)
-    x_ind = x_ind.view(b,m,o,e).permute(0,1,3,2)
-    out = torch.matmul(x_ind, y)
-    return out
+            If = I_chunk.view(b,1,this_chunk_size,o).expand(b,k,this_chunk_size,o)
+            del I_chunk
+            y_full = torch.cuda.FloatTensor(b,k,this_chunk_size,n).fill_(0)
+            y_full = y_full.scatter_add(source=y_chunk.permute(0,3,1,2), index=If, dim=3)
+            del y_chunk
+
+            for i_k in range(k):
+                grad_x += torch.matmul(grad_chunk[:,i_k,:,:], y_full[:,i_k,:,:]).permute(0,2,1)
+
+            del y_full
+            grad_y_full = torch.cat([torch.matmul(x_interm, grad_chunk[:,i_k:i_k+1,:,:]) for i_k in range(k)], 1)
+            del grad_chunk
+            grad_y_chunk = grad_y_full.gather(2, If.permute(0,1,3,2)).permute(0,3,2,1)
+            del grad_y_full
+            grad_y_chunks.append(grad_y_chunk)
+
+        grad_y = torch.cat(grad_y_chunks, 1)
+        return grad_x, grad_y, None, None
+
+def indexed_matmul_1_efficient(x,y,I):
+    return IndexedMatmul1Efficient.apply(x,y,I)
+
+
+def indexed_matmul_2_efficient(x,y,I, chunk_size=256):
+    return IndexedMatmul2Efficient.apply(x,y,I,chunk_size)
 
 def euclidean_distance(x,y):
     out = -2*torch.matmul(x, y)
