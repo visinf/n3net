@@ -1,4 +1,4 @@
-# Neural Nearest Neighbors Networks (NIPS*2018)
+# Neural Nearest Neighbors Networks (NeurIPS*2018)
 
 Official implementation of the denoising (PyTorch) and correspondence classification (Tensorflow) N3NET, that will be published in our NIPS paper:
 
@@ -24,8 +24,13 @@ Further requirements can be installed with
     pip install -r requirements.txt
     ```
 
-**A note on inference with Tensor Comprehensions.** Running test time inference on large images might exhaust your GPU memory. For that case, our code tries to run inference with [Tensor Comprehensions](https://facebookresearch.github.io/TensorComprehensions/). Please follow their instructions to setup TC in your python environment. If you have not installed TC in your environment inference will fall back to a slower computation.
+**Update March 28, 2019**
+Since tensor comprehensions is not maintained anymore, we provide a memory and time efficient implementation of an indexed matrix multiplication. To build the corresponding cuda kernel please cd into `lib` and run 
 
+    ```
+    python setup.py install
+    ```
+    
 Please download the BSDS500, Urban100 and Set12 datasets by cd'ing into `datasets/` and using the scripts provided therein. If you want to train your own Poisson-Gaussian denoising model, please additionally download the DIV2k dataset and the Waterloo dataset.
 
 For setting up the correspondence classification code, please clone the repository (https://github.com/vcg-uvic/learned-correspondence-release), follow their instructions to setup your environment and copy the files located in `src_correspondence/`. This can also conveniently be done using the script `src_correspondence/clone_CNNet.sh`.
