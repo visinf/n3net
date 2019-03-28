@@ -1,10 +1,12 @@
 # Neural Nearest Neighbors Networks (NeurIPS*2018)
 
-Official implementation of the denoising (PyTorch) and correspondence classification (Tensorflow) N3NET, that will be published in our NIPS paper:
+Official implementation of the denoising (PyTorch) and correspondence classification (Tensorflow) N3NET, that will be published in our NeurIPS paper:
 
-Tobias Plötz and Stefan Roth, **Neural Nearest Neighbors Networks**, Advances in Neural Information Processing Systems (NIPS), 2018
+Tobias Plötz and Stefan Roth, **Neural Nearest Neighbors Networks**, Advances in Neural Information Processing Systems (NeurIPS), 2018
 
 Preprint: https://arxiv.org/abs/1810.12575
+
+NeurIPS Proceedings: https://papers.nips.cc/paper/7386-neural-nearest-neighbors-networks
 
 Contact: Tobias Plötz (tobias.ploetz@visinf.tu-darmstadt.de)
 
@@ -93,7 +95,7 @@ The core of the Tensorflow implementation is located in `src_correspondence/non_
 @inproceedings{Ploetz:2018:NNN,
   title     = {Neural Nearest Neighbors Networks},
   author    = {Pl\"otz, Tobias and Roth, Stefan},
-  booktitle = {Advances in Neural Information Processing Systems (NIPS)},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
   year = {2018}
 }
 ```
