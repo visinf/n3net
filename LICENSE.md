@@ -3,7 +3,7 @@ All rights reserved.
 
 Author: Tobias Plötz
 
-The code may be used free of charge for non-commercial and
+The code may be used free of charge for non-commercial, research, and
 educational purposes, the only requirement is that this text is
 preserved within the derivative work. For any other purpose you
 must contact the authors for permission. This code may not be
