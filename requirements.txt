@@ -2,5 +2,5 @@ pyyaml>=4.2b1
 Cython==0.28.2
 tensorboardX==1.2
 torchvision==0.2.0
-scipy==1.0.1
+scipy==1.10.0
 h5py==2.7.1
